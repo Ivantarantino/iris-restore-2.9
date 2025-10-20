@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { exec } from "child_process";
 import axios from "axios";
 import OpenAI from "openai";
 import gTTS from "gtts";
@@ -27,7 +26,7 @@ export function getTtsEngine() {
 }
 
 export async function synthesizeVoice(text) {
-  const outputPath = path.join(__dirname, "voice.mp3");
+  const outputPath = path.join(__dirname, "voice.ogg");
   const engine = activeEngine;
 
   switch (engine) {
@@ -35,9 +34,12 @@ export async function synthesizeVoice(text) {
       return new Promise((resolve, reject) => {
         try {
           const speech = new gTTS(text, "it");
-          speech.save(outputPath, (err) => {
-            if (err) reject(err);
-            else resolve(outputPath);
+          const tempPath = path.join(__dirname, "temp.mp3");
+          speech.save(tempPath, (err) => {
+            if (err) return reject(err);
+            convertToOgg(tempPath, outputPath)
+              .then(() => resolve(outputPath))
+              .catch(reject);
           });
         } catch (err) {
           reject(err);
@@ -45,12 +47,13 @@ export async function synthesizeVoice(text) {
       });
 
     case "openai":
-      const mp3 = await openai.audio.speech.create({
+      const speechFile = await openai.audio.speech.create({
         model: "gpt-4o-mini-tts",
         voice: "alloy",
         input: text,
+        format: "ogg",
       });
-      const buffer = Buffer.from(await mp3.arrayBuffer());
+      const buffer = Buffer.from(await speechFile.arrayBuffer());
       fs.writeFileSync(outputPath, buffer);
       return outputPath;
 
@@ -66,4 +69,20 @@ export async function synthesizeVoice(text) {
     default:
       throw new Error(`Motore TTS non riconosciuto: ${engine}`);
   }
+}
+
+// 🔄 conversione da mp3 a ogg
+function convertToOgg(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    import("fluent-ffmpeg").then(({ default: ffmpeg }) => {
+      ffmpeg(inputPath)
+        .toFormat("ogg")
+        .on("end", () => {
+          fs.unlinkSync(inputPath);
+          resolve(outputPath);
+        })
+        .on("error", reject)
+        .save(outputPath);
+    }).catch(reject);
+  });
 }
