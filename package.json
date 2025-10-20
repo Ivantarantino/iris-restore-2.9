@@ -1,24 +1,26 @@
 {
   "name": "iris-3.0-restore",
   "version": "3.0.0",
-  "type": "module",
+  "description": "IRIS 3.0 — sistema ibrido con RAG, TTS multiplo e modalità dinamiche",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.8",
-    "dotenv": "^16.3.1",
+    "@qdrant/js-client-rest": "^1.8.0",
+    "axios": "^1.7.4",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.0",
     "express": "^4.18.2",
-    "fs": "0.0.1-security",
-    "node-telegram-bot-api": "^0.63.0",
-    "openai": "^4.24.7",
-    "path": "^0.12.7",
-    "gtts": "^0.2.1",
-    "fluent-ffmpeg": "^2.1.2",
-    "ffmpeg-static": "^5.2.0"
+    "gtts": "^2.0.0",
+    "node-fetch": "^3.3.2",
+    "node-telegram-bot-api": "^0.61.0",
+    "openai": "^4.13.0"
   },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "author": "Ivano Tarantino",
+  "license": "MIT"
 }
