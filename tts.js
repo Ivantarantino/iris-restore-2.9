@@ -1,88 +1,56 @@
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import axios from "axios";
+import fetch from "node-fetch";
+import googleTTS from "google-tts-api";
 import OpenAI from "openai";
-import gTTS from "gtts";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-let activeEngine = process.env.TTS_DEFAULT?.toLowerCase() || "gtts";
+// Metodo selezionabile: "google", "openai", "bark"
+const TTS_MODE = process.env.TTS_MODE || "google";
 
-export function setTtsEngine(engine) {
-  const valid = ["gtts", "openai", "bark"];
-  if (!valid.includes(engine.toLowerCase())) {
-    throw new Error(`Motore TTS non valido. Usa uno tra: ${valid.join(", ")}`);
-  }
-  activeEngine = engine.toLowerCase();
-  console.log(`🎙️ Motore TTS impostato su: ${activeEngine}`);
-  return activeEngine;
-}
+export async function generateTTS(text, outputPath = "./voice.ogg") {
+  try {
+    if (!text || text.trim() === "") throw new Error("Testo TTS vuoto.");
 
-export function getTtsEngine() {
-  return activeEngine;
-}
+    console.log(`🎙️ Generazione voce con modalità: ${TTS_MODE}`);
 
-export async function synthesizeVoice(text) {
-  const outputPath = path.join(__dirname, "voice.ogg");
-  const engine = activeEngine;
-
-  switch (engine) {
-    case "gtts":
-      return new Promise((resolve, reject) => {
-        try {
-          const speech = new gTTS(text, "it");
-          const tempPath = path.join(__dirname, "temp.mp3");
-          speech.save(tempPath, (err) => {
-            if (err) return reject(err);
-            convertToOgg(tempPath, outputPath)
-              .then(() => resolve(outputPath))
-              .catch(reject);
-          });
-        } catch (err) {
-          reject(err);
-        }
+    // GOOGLE TTS (gratuito e rapido)
+    if (TTS_MODE === "google") {
+      const url = googleTTS.getAudioUrl(text, {
+        lang: "it",
+        slow: false,
+        host: "https://translate.google.com",
       });
 
-    case "openai":
-      const speechFile = await openai.audio.speech.create({
+      const response = await fetch(url);
+      const buffer = await response.arrayBuffer();
+      fs.writeFileSync(outputPath, Buffer.from(buffer));
+      return outputPath;
+    }
+
+    // OPENAI TTS (voce premium, richiede API key)
+    if (TTS_MODE === "openai") {
+      const mp3 = await openai.audio.speech.create({
         model: "gpt-4o-mini-tts",
         voice: "alloy",
         input: text,
-        format: "ogg",
       });
-      const buffer = Buffer.from(await speechFile.arrayBuffer());
+      const buffer = Buffer.from(await mp3.arrayBuffer());
       fs.writeFileSync(outputPath, buffer);
       return outputPath;
+    }
 
-    case "bark":
-      const response = await axios.post(
-        "https://api.bark.voice.suno.ai/v1/generate",
-        { text, voice: "default", language: "it" },
-        { responseType: "arraybuffer" }
-      );
-      fs.writeFileSync(outputPath, response.data);
-      return outputPath;
+    // BARK TTS (simulazione per ora)
+    if (TTS_MODE === "bark") {
+      const mockPath = "./bark_voice.ogg";
+      fs.writeFileSync(mockPath, Buffer.from([]));
+      console.log("🐺 Bark TTS placeholder generato.");
+      return mockPath;
+    }
 
-    default:
-      throw new Error(`Motore TTS non riconosciuto: ${engine}`);
+    throw new Error(`Modalità TTS sconosciuta: ${TTS_MODE}`);
+  } catch (err) {
+    console.error("Errore TTS:", err);
+    return null;
   }
-}
-
-// 🔄 conversione da mp3 a ogg
-function convertToOgg(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    import("fluent-ffmpeg").then(({ default: ffmpeg }) => {
-      ffmpeg(inputPath)
-        .toFormat("ogg")
-        .on("end", () => {
-          fs.unlinkSync(inputPath);
-          resolve(outputPath);
-        })
-        .on("error", reject)
-        .save(outputPath);
-    }).catch(reject);
-  });
 }
