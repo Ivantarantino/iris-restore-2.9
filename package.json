@@ -1,0 +1,20 @@
+{
+  "name": "iris-3.0-restore",
+  "version": "3.0.0",
+  "description": "IRIS 3.0 – Restore (Coscienza Vettoriale + RAG + /mode + /essence)",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "load:docs": "node loadDocs.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-telegram-bot-api": "^0.64.0",
+    "openai": "^4.59.0",
+    "pdf-parse": "^1.1.1"
+  }
+}
