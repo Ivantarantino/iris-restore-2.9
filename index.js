@@ -33,6 +33,7 @@ if (process.env.RENDER) {
   console.log("🤖 Webhook impostato su:", webhookUrl);
   console.log("🧭 Modalità iniziale:", MODE.toUpperCase());
 
+  // 📬 Endpoint Telegram
   app.post(`/bot${TOKEN}`, (req, res) => {
     bot.processUpdate(req.body);
     res.sendStatus(200);
@@ -44,6 +45,11 @@ else {
   bot = new TelegramBot(TOKEN, { polling: true });
   console.log("🌍 Server attivo su porta", PORT);
 }
+
+// ✅ ROUTE BASE — evita errore "Cannot GET /"
+app.get("/", (req, res) => {
+  res.send("🌍 IRIS è online e il webhook è attivo 🧠");
+});
 
 // 💬 Gestione messaggi Telegram
 bot.on("message", async (msg) => {
