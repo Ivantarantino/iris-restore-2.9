@@ -9,14 +9,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// 🔄 motore TTS attivo
+let activeEngine = process.env.TTS_DEFAULT?.toLowerCase() || "gtts";
+
 /**
- * Sintetizza testo in voce secondo il motore specificato.
- * @param {string} text - Testo da vocalizzare
- * @returns {Promise<string>} Percorso del file audio generato
+ * Cambia motore TTS in runtime
+ */
+export function setTtsEngine(engine) {
+  const valid = ["gtts", "openai", "bark"];
+  if (!valid.includes(engine.toLowerCase())) {
+    throw new Error(`Motore TTS non valido. Usa uno tra: ${valid.join(", ")}`);
+  }
+  activeEngine = engine.toLowerCase();
+  console.log(`🎙️ Motore TTS impostato su: ${activeEngine}`);
+  return activeEngine;
+}
+
+/**
+ * Restituisce il motore attualmente attivo
+ */
+export function getTtsEngine() {
+  return activeEngine;
+}
+
+/**
+ * Sintetizza testo in voce
  */
 export async function synthesizeVoice(text) {
-  const engine = (process.env.TTS_ENGINE || "gtts").toLowerCase();
   const outputPath = path.join(__dirname, "voice.mp3");
+  const engine = activeEngine;
 
   switch (engine) {
     // 🎙️ GOOGLE TTS
@@ -40,7 +61,7 @@ export async function synthesizeVoice(text) {
       fs.writeFileSync(outputPath, buffer);
       return outputPath;
 
-    // 🐺 BARK (API esterna Suno)
+    // 🐺 BARK (API Suno)
     case "bark":
       const response = await axios.post(
         "https://api.bark.voice.suno.ai/v1/generate",
