@@ -5,8 +5,7 @@ import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 import { uploadBookToQdrant } from "./loadDocs.js";
-import { exec } from "child_process";
-import { setInterval } from "timers";
+import { generateTTS } from "./tts.js";
 import OpenAI from "openai";
 
 dotenv.config();
@@ -31,30 +30,27 @@ setInterval(() => {
   fetch(`https://iris-restore.onrender.com/`)
     .then(() => console.log("🔄 Ping di mantenimento inviato"))
     .catch(() => console.log("⚠️ Ping fallito"));
-}, 14 * 60 * 1000); // ogni 14 minuti
+}, 11 * 60 * 1000); // ogni 11 minuti
 
 // === Modalità iniziale ===
 let mode = "hy"; // free | hy | books
-let ttsEngine = "gtts"; // gtts | openai | bark
+let ttsEngine = "google"; // google | openai | bark
 
 console.log(`☁️ Ambiente Render attivo su porta ${PORT}`);
 console.log(`🧭 Modalità iniziale: ${mode.toUpperCase()}`);
 
-// === TTS helper ===
-function speak(text, chatId) {
-  if (ttsEngine === "gtts") {
-    const outFile = path.join(process.cwd(), "voice.ogg");
-    const command = `gtts-cli "${text}" --lang it --output "${outFile}" && ffmpeg -i "${outFile}" -c:a libopus -b:a 48k "${outFile.replace(".ogg", "_final.ogg")}" -y`;
-    exec(command, (err) => {
-      if (err) {
-        console.error("Errore TTS:", err);
-        bot.sendMessage(chatId, text);
-        return;
-      }
-      bot.sendVoice(chatId, outFile.replace(".ogg", "_final.ogg"));
-    });
-  } else {
-    bot.sendMessage(chatId, text);
+// === Funzione TTS ===
+async function speak(text, chatId) {
+  try {
+    const voicePath = await generateTTS(text, "./voice.ogg");
+    if (voicePath && fs.existsSync(voicePath)) {
+      await bot.sendVoice(chatId, voicePath);
+    } else {
+      await bot.sendMessage(chatId, text);
+    }
+  } catch (err) {
+    console.error("Errore TTS:", err);
+    await bot.sendMessage(chatId, text);
   }
 }
 
@@ -69,7 +65,7 @@ bot.onText(/\/help/, (msg) => {
 /mode — mostra o cambia modalità (free, hy, books)
 /books add <titolo> — aggiungi un nuovo libro
 /books list — elenca i libri nella libreria
-/tts — mostra o cambia motore vocale (gtts, openai, bark)
+/tts — mostra o cambia motore vocale (google, openai, bark)
   `;
   bot.sendMessage(msg.chat.id, helpMsg, { parse_mode: "Markdown" });
 });
@@ -90,16 +86,16 @@ bot.onText(/\/mode (.+)/, (msg, match) => {
 
 // === Gestione TTS ===
 bot.onText(/\/tts/, (msg) => {
-  bot.sendMessage(msg.chat.id, `🎤 Motore TTS attuale: ${ttsEngine}\nUsa /tts gtts, /tts openai o /tts bark per cambiarlo.`);
+  bot.sendMessage(msg.chat.id, `🎤 Motore TTS attuale: ${ttsEngine}\nUsa /tts google, /tts openai o /tts bark per cambiarlo.`);
 });
 
 bot.onText(/\/tts (.+)/, (msg, match) => {
   const newTTS = match[1].toLowerCase();
-  if (["gtts", "openai", "bark"].includes(newTTS)) {
+  if (["google", "openai", "bark"].includes(newTTS)) {
     ttsEngine = newTTS;
     bot.sendMessage(msg.chat.id, `✅ Motore TTS impostato su: ${ttsEngine}`);
   } else {
-    bot.sendMessage(msg.chat.id, "⚠️ Motore non valido. Usa gtts | openai | bark.");
+    bot.sendMessage(msg.chat.id, "⚠️ Motore non valido. Usa google | openai | bark.");
   }
 });
 
@@ -131,7 +127,7 @@ bot.on("message", async (msg) => {
   if (!text || text.startsWith("/")) return;
 
   console.log(`📩 Messaggio da ${msg.chat.first_name}: ${text}`);
-  speak(`Ciao ${msg.chat.first_name}, ho ricevuto: ${text}`, chatId);
+  await speak(`Ciao ${msg.chat.first_name}, ho ricevuto: ${text}`, chatId);
 });
 
 // === Webhook server ===
