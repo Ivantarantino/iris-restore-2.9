@@ -4,7 +4,7 @@ import { OpenAI } from "openai";
 import TelegramBot from "node-telegram-bot-api";
 import fs from "fs";
 import { performRagSearch } from "./ragSearch.js";
-import { synthesizeVoice } from "./tts.js";
+import { synthesizeVoice, setTtsEngine, getTtsEngine } from "./tts.js";
 
 dotenv.config();
 
@@ -13,7 +13,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 const TOKEN = process.env.TELEGRAM_TOKEN;
-const MODE = process.env.MODE || "hybrid";
+const MODE = process.env.IRIS_MODE || "hybrid";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -37,7 +37,7 @@ if (process.env.RENDER) {
     bot.processUpdate(req.body);
     res.sendStatus(200);
   });
-} 
+}
 // 💻 Ambiente locale (polling)
 else {
   console.log("💻 Ambiente locale");
@@ -45,7 +45,7 @@ else {
   console.log("🌍 Server attivo su porta", PORT);
 }
 
-// 💬 Gestione messaggi
+// 💬 Gestione messaggi Telegram
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text?.trim();
@@ -53,14 +53,32 @@ bot.on("message", async (msg) => {
   console.log(`📩 Messaggio da ${msg.from.first_name || "utente"}: ${text}`);
   if (!text) return;
 
+  // 🔄 Cambio motore TTS via comando Telegram
+  if (text.startsWith("/tts")) {
+    const [, engine] = text.split(" ");
+    if (!engine) {
+      return await bot.sendMessage(
+        chatId,
+        `🎧 Motore attuale: ${getTtsEngine()}\nUsa uno di questi:\n/tts gtts\n/tts openai\n/tts bark`
+      );
+    }
+    try {
+      const newEngine = setTtsEngine(engine);
+      await bot.sendMessage(chatId, `✅ Motore vocale impostato su: ${newEngine}`);
+    } catch (err) {
+      await bot.sendMessage(chatId, `❌ ${err.message}`);
+    }
+    return;
+  }
+
   try {
-    // ✨ 1. genera risposta testuale
+    // ✨ 1. Genera risposta testuale
     const response = await performRagSearch(text, MODE);
 
-    // invia testo
+    // Invia testo
     await bot.sendMessage(chatId, response);
 
-    // ✨ 2. genera e invia voce
+    // ✨ 2. Genera e invia voce
     try {
       const audioPath = await synthesizeVoice(response);
       await bot.sendAudio(chatId, audioPath);
@@ -68,7 +86,6 @@ bot.on("message", async (msg) => {
     } catch (err) {
       console.error("Errore TTS:", err.message);
     }
-
   } catch (error) {
     console.error("Errore nel processo:", error);
     await bot.sendMessage(chatId, "⚠️ Errore interno durante l'elaborazione.");
