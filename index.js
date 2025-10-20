@@ -2,7 +2,9 @@ import express from "express";
 import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import TelegramBot from "node-telegram-bot-api";
-import { ragSearch } from "./ragSearch.js";
+import fs from "fs";
+import { performRagSearch } from "./ragSearch.js";
+import { synthesizeVoice } from "./tts.js";
 
 dotenv.config();
 
@@ -24,7 +26,6 @@ if (process.env.RENDER) {
   console.log("☁️ Ambiente Render attivo su porta", PORT);
   bot = new TelegramBot(TOKEN, { webHook: true });
 
-  // ✅ URL dinamico corretto
   const BASE_URL = process.env.PUBLIC_BASE_URL || `https://iris-restore.onrender.com`;
   const webhookUrl = `${BASE_URL}/bot${TOKEN}`;
 
@@ -53,11 +54,24 @@ bot.on("message", async (msg) => {
   if (!text) return;
 
   try {
-    const ragResponse = await ragSearch(text);
-    await bot.sendMessage(chatId, ragResponse);
+    // ✨ 1. genera risposta testuale
+    const response = await performRagSearch(text, MODE);
+
+    // invia testo
+    await bot.sendMessage(chatId, response);
+
+    // ✨ 2. genera e invia voce
+    try {
+      const audioPath = await synthesizeVoice(response);
+      await bot.sendAudio(chatId, audioPath);
+      fs.unlinkSync(audioPath); // pulizia file temporaneo
+    } catch (err) {
+      console.error("Errore TTS:", err.message);
+    }
+
   } catch (error) {
-    console.error("Errore nel processo RAG:", error);
-    await bot.sendMessage(chatId, "Si è verificato un errore durante l'elaborazione del messaggio.");
+    console.error("Errore nel processo:", error);
+    await bot.sendMessage(chatId, "⚠️ Errore interno durante l'elaborazione.");
   }
 });
 
