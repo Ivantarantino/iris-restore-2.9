@@ -1,158 +1,148 @@
 import express from "express";
-import dotenv from "dotenv";
-import { OpenAI } from "openai";
 import TelegramBot from "node-telegram-bot-api";
+import bodyParser from "body-parser";
 import fs from "fs";
-import axios from "axios";
-import { performRagSearch } from "./ragSearch.js";
-import { synthesizeVoice, setTtsEngine, getTtsEngine } from "./tts.js";
+import path from "path";
+import dotenv from "dotenv";
+import { uploadBookToQdrant } from "./loadDocs.js";
+import { exec } from "child_process";
+import { setInterval } from "timers";
+import OpenAI from "openai";
 
 dotenv.config();
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 1000;
 const TOKEN = process.env.TELEGRAM_TOKEN;
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://iris-restore.onrender.com";
+const bot = new TelegramBot(TOKEN, { polling: false });
 
-// 🔁 Modalità corrente
-const VALID_MODES = ["hy", "hybrid", "free", "libri", "books"];
-let CURRENT_MODE = (process.env.IRIS_MODE || "hy").toLowerCase();
-
-// OpenAI client
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-let bot;
-
-// ☁️ Render: webhook | 💻 Locale: polling
-if (process.env.RENDER) {
-  console.log("☁️ Ambiente Render attivo su porta", PORT);
-  bot = new TelegramBot(TOKEN, { webHook: true });
-  const webhookUrl = `${PUBLIC_BASE_URL}/bot${TOKEN}`;
-  bot.setWebHook(webhookUrl);
-  console.log("🤖 Webhook impostato su:", webhookUrl);
-  console.log("🧭 Modalità iniziale:", CURRENT_MODE.toUpperCase());
-
-  app.post(`/bot${TOKEN}`, (req, res) => {
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
-  });
-} else {
-  console.log("💻 Ambiente locale");
-  bot = new TelegramBot(TOKEN, { polling: true });
-  console.log("🌍 Server attivo su porta", PORT);
-}
-
-// ✅ Route base
-app.get("/", (_req, res) => {
-  res.send("🌍 IRIS è online e il webhook è attivo 🧠");
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-// 💬 Gestione messaggi Telegram
+// === Directories ===
+const BOOKS_DIR = path.join(process.cwd(), "books");
+if (!fs.existsSync(BOOKS_DIR)) fs.mkdirSync(BOOKS_DIR);
+
+// === Ping di mantenimento attivo (uptime) ===
+setInterval(() => {
+  fetch(`https://iris-restore.onrender.com/`)
+    .then(() => console.log("🔄 Ping di mantenimento inviato"))
+    .catch(() => console.log("⚠️ Ping fallito"));
+}, 14 * 60 * 1000); // ogni 14 minuti
+
+// === Modalità iniziale ===
+let mode = "hy"; // free | hy | books
+let ttsEngine = "gtts"; // gtts | openai | bark
+
+console.log(`☁️ Ambiente Render attivo su porta ${PORT}`);
+console.log(`🧭 Modalità iniziale: ${mode.toUpperCase()}`);
+
+// === TTS helper ===
+function speak(text, chatId) {
+  if (ttsEngine === "gtts") {
+    const outFile = path.join(process.cwd(), "voice.ogg");
+    const command = `gtts-cli "${text}" --lang it --output "${outFile}" && ffmpeg -i "${outFile}" -c:a libopus -b:a 48k "${outFile.replace(".ogg", "_final.ogg")}" -y`;
+    exec(command, (err) => {
+      if (err) {
+        console.error("Errore TTS:", err);
+        bot.sendMessage(chatId, text);
+        return;
+      }
+      bot.sendVoice(chatId, outFile.replace(".ogg", "_final.ogg"));
+    });
+  } else {
+    bot.sendMessage(chatId, text);
+  }
+}
+
+// === Gestione comandi ===
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(msg.chat.id, `✨ Benvenuto, ${msg.chat.first_name}!\nModalità attuale: ${mode.toUpperCase()}`);
+});
+
+bot.onText(/\/help/, (msg) => {
+  const helpMsg = `
+📚 *Comandi disponibili*:
+/mode — mostra o cambia modalità (free, hy, books)
+/books add <titolo> — aggiungi un nuovo libro
+/books list — elenca i libri nella libreria
+/tts — mostra o cambia motore vocale (gtts, openai, bark)
+  `;
+  bot.sendMessage(msg.chat.id, helpMsg, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/mode/, (msg) => {
+  bot.sendMessage(msg.chat.id, `🔁 Modalità attuale: ${mode.toUpperCase()}\nScrivi /mode free, /mode hy o /mode books per cambiarla.`);
+});
+
+bot.onText(/\/mode (.+)/, (msg, match) => {
+  const newMode = match[1].toLowerCase();
+  if (["free", "hy", "books"].includes(newMode)) {
+    mode = newMode;
+    bot.sendMessage(msg.chat.id, `✅ Modalità cambiata a: ${mode.toUpperCase()}`);
+  } else {
+    bot.sendMessage(msg.chat.id, "⚠️ Modalità non valida. Usa free | hy | books.");
+  }
+});
+
+// === Gestione TTS ===
+bot.onText(/\/tts/, (msg) => {
+  bot.sendMessage(msg.chat.id, `🎤 Motore TTS attuale: ${ttsEngine}\nUsa /tts gtts, /tts openai o /tts bark per cambiarlo.`);
+});
+
+bot.onText(/\/tts (.+)/, (msg, match) => {
+  const newTTS = match[1].toLowerCase();
+  if (["gtts", "openai", "bark"].includes(newTTS)) {
+    ttsEngine = newTTS;
+    bot.sendMessage(msg.chat.id, `✅ Motore TTS impostato su: ${ttsEngine}`);
+  } else {
+    bot.sendMessage(msg.chat.id, "⚠️ Motore non valido. Usa gtts | openai | bark.");
+  }
+});
+
+// === Gestione Books ===
+bot.onText(/\/books add (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const title = match[1].trim();
+  const bookPath = path.join(BOOKS_DIR, `${title}.txt`);
+
+  fs.writeFileSync(bookPath, `Titolo: ${title}\n(aggiungi contenuti qui)`);
+  bot.sendMessage(chatId, `📘 Libro "${title}" salvato localmente. Indicizzazione in corso...`);
+
+  const success = await uploadBookToQdrant(title);
+  if (success) speak(`Libro ${title} aggiunto e indicizzato con successo.`, chatId);
+  else speak(`Errore durante l'indicizzazione di ${title}.`, chatId);
+});
+
+bot.onText(/\/books list/, (msg) => {
+  const books = fs.readdirSync(BOOKS_DIR).filter((f) => f.endsWith(".txt"));
+  if (books.length === 0) bot.sendMessage(msg.chat.id, "Nessun libro trovato.");
+  else bot.sendMessage(msg.chat.id, `📚 Libreria:\n${books.map((b) => "- " + b.replace(".txt", "")).join("\n")}`);
+});
+
+// === Messaggi generali ===
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
-  const text = msg.text?.trim();
-  if (!text) return;
+  const text = msg.text;
 
-  console.log(`📩 Messaggio da ${msg.from.first_name || "utente"}: ${text}`);
+  if (!text || text.startsWith("/")) return;
 
-  // ---------- COMANDI ----------
-  if (text.toLowerCase().startsWith("/help")) {
-    const help = [
-      "✨ *IRIS – Comandi disponibili*",
-      "",
-      "• /mode → mostra la modalità attuale",
-      "• /mode hy → ibrido (prima libri, poi AI)",
-      "• /mode free → solo AI (flusso libero)",
-      "• /mode libri (o /mode books) → solo libreria",
-      "",
-      "• /tts → mostra motore vocale",
-      "• /tts gtts | openai | bark → cambia voce",
-    ].join("\n");
-    await bot.sendMessage(chatId, help, { parse_mode: "Markdown" });
-    return;
-  }
-
-  if (text.toLowerCase().startsWith("/mode")) {
-    const parts = text.split(/\s+/);
-    const arg = (parts[1] || "").toLowerCase();
-
-    if (!arg) {
-      await bot.sendMessage(
-        chatId,
-        `🧭 Modalità attuale: *${CURRENT_MODE.toUpperCase()}*\nScegli tra: hy | free | libri (books)`,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    const normalized =
-      arg === "hybrid" ? "hy" :
-      arg === "books" ? "libri" :
-      arg;
-
-    if (!VALID_MODES.includes(normalized)) {
-      await bot.sendMessage(chatId, "❌ Modalità non valida. Usa: hy | free | libri (books)");
-      return;
-    }
-
-    CURRENT_MODE = normalized;
-    await bot.sendMessage(chatId, `✅ Modalità impostata su: *${CURRENT_MODE.toUpperCase()}*`, { parse_mode: "Markdown" });
-    console.log("🔁 Modalità aggiornata:", CURRENT_MODE);
-    return;
-  }
-
-  if (text.toLowerCase().startsWith("/tts")) {
-    const [, engine] = text.split(/\s+/);
-    if (!engine) {
-      await bot.sendMessage(
-        chatId,
-        `🎧 Motore attuale: ${getTtsEngine()}\nUsa: /tts gtts | openai | bark`
-      );
-      return;
-    }
-    try {
-      const newEngine = setTtsEngine(engine.toLowerCase());
-      await bot.sendMessage(chatId, `✅ Motore vocale impostato su: ${newEngine}`);
-    } catch (err) {
-      await bot.sendMessage(chatId, `❌ ${err.message}`);
-    }
-    return;
-  }
-
-  // ---------- RISPOSTA ----------
-  try {
-    const response = await performRagSearch(text, CURRENT_MODE);
-    await bot.sendMessage(chatId, response);
-
-    try {
-      const audioPath = await synthesizeVoice(response);
-      await bot.sendAudio(chatId, audioPath);
-      fs.unlinkSync(audioPath);
-    } catch (err) {
-      console.error("Errore TTS:", err.message);
-    }
-  } catch (error) {
-    console.error("Errore nel processo:", error);
-    await bot.sendMessage(chatId, "⚠️ Errore interno durante l'elaborazione.");
-  }
+  console.log(`📩 Messaggio da ${msg.chat.first_name}: ${text}`);
+  speak(`Ciao ${msg.chat.first_name}, ho ricevuto: ${text}`, chatId);
 });
 
-// ⏱️ Keep Alive – Ping automatico ogni 10 minuti
-function startKeepAlive() {
-  setInterval(async () => {
-    try {
-      await axios.get(PUBLIC_BASE_URL);
-      console.log("⏱️ Ping inviato a", PUBLIC_BASE_URL);
-    } catch (err) {
-      console.error("⚠️ Errore ping:", err.message);
-    }
-  }, 10 * 60 * 1000);
-}
+// === Webhook server ===
+app.post(`/bot${TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
 
-// 🚀 Avvio server
+app.get("/", (req, res) => res.send("IRIS è viva 🌸"));
+
 app.listen(PORT, () => {
   console.log(`🌍 Server attivo su porta ${PORT}`);
-  startKeepAlive(); // <--- ping automatico
+  bot.setWebHook(`https://iris-restore.onrender.com/bot${TOKEN}`);
 });
