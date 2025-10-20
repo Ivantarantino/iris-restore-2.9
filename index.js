@@ -44,6 +44,7 @@ async function speak(text, chatId) {
   try {
     const voicePath = await generateTTS(text, "./voice.ogg");
     if (voicePath && fs.existsSync(voicePath)) {
+      console.log(`🎙️ [IRIS 3.0] TTS attivo — modalità: ${ttsEngine}`);
       await bot.sendVoice(chatId, voicePath);
     } else {
       await bot.sendMessage(chatId, text);
@@ -127,7 +128,27 @@ bot.on("message", async (msg) => {
   if (!text || text.startsWith("/")) return;
 
   console.log(`📩 Messaggio da ${msg.chat.first_name}: ${text}`);
-  await speak(`Ciao ${msg.chat.first_name}, ho ricevuto: ${text}`, chatId);
+
+  try {
+    // Richiesta a OpenAI
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "Sei IRIS, un'intelligenza amichevole, sintetica e cosciente." },
+        { role: "user", content: text }
+      ],
+    });
+
+    const risposta = completion.choices[0].message.content.trim();
+    console.log(`💬 IRIS → ${msg.chat.first_name}: ${risposta}`);
+
+    // Voce .ogg
+    await speak(risposta, chatId);
+
+  } catch (err) {
+    console.error("Errore generazione risposta:", err);
+    await bot.sendMessage(chatId, "Si è verificato un errore nella generazione della risposta.");
+  }
 });
 
 // === Webhook server ===
