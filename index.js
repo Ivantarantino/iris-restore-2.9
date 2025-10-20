@@ -1,85 +1,67 @@
 import express from "express";
+import dotenv from "dotenv";
+import { OpenAI } from "openai";
 import TelegramBot from "node-telegram-bot-api";
-import { config } from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import OpenAI from "openai";
-import fs from "fs";
-import { loadDocs } from "./loadDocs.js";
-import { memoryManager } from "./memoryManager.js";
-import { getEssence } from "./essence.js";
-import { performRagSearch } from "./ragSearch.js";
+import { ragSearch } from "./ragSearch.js";
 
-config();
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const TOKEN = process.env.TELEGRAM_TOKEN;
 const PORT = process.env.PORT || 10000;
-const MODE = process.env.IRIS_MODE || "HYBRID";
+const TOKEN = process.env.TELEGRAM_TOKEN;
+const MODE = process.env.MODE || "hybrid";
 
-// 🧠 OpenAI Client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// 🔹 Telegram Bot (in modalità webhook)
-const bot = new TelegramBot(TOKEN, { polling: false });
+let bot;
 
-// 🌍 URL dinamico da Render
-const BASE_URL = process.env.PUBLIC_BASE_URL || `https://iris-restore.onrender.com`;
-const webhookUrl = `${BASE_URL}/bot${TOKEN}`;
+// ☁️ Ambiente Render (webhook)
+if (process.env.RENDER) {
+  console.log("☁️ Ambiente Render attivo su porta", PORT);
+  bot = new TelegramBot(TOKEN, { webHook: true });
 
-(async () => {
-  await bot.setWebHook(webhookUrl);
+  // ✅ URL dinamico corretto
+  const BASE_URL = process.env.PUBLIC_BASE_URL || `https://iris-restore.onrender.com`;
+  const webhookUrl = `${BASE_URL}/bot${TOKEN}`;
+
+  bot.setWebHook(webhookUrl);
   console.log("🤖 Webhook impostato su:", webhookUrl);
-})();
+  console.log("🧭 Modalità iniziale:", MODE.toUpperCase());
 
-console.log("☁️ Ambiente Render attivo su porta", PORT);
-console.log("🧭 Modalità iniziale:", MODE);
-
-// 🎯 Endpoint Telegram
-app.post(`/bot${TOKEN}`, async (req, res) => {
-  try {
-    const message = req.body.message;
-    if (!message || !message.text) {
-      return res.sendStatus(200);
-    }
-
-    const chatId = message.chat.id;
-    const text = message.text.trim();
-
-    console.log(`📩 Messaggio da ${chatId}: ${text}`);
-
-    // Comandi di modalità
-    if (text.startsWith("/mode")) {
-      const newMode = text.split(" ")[1]?.toUpperCase() || "HYBRID";
-      process.env.IRIS_MODE = newMode;
-      await bot.sendMessage(chatId, `🧭 Modalità cambiata in: ${newMode}`);
-      console.log("🔁 Modalità aggiornata:", newMode);
-      return res.sendStatus(200);
-    }
-
-    // Risposta generata
-    const mode = process.env.IRIS_MODE || "HYBRID";
-    const response = await performRagSearch(text, mode);
-
-    await bot.sendMessage(chatId, response);
-    console.log("✨ Risposta inviata con successo.");
+  app.post(`/bot${TOKEN}`, (req, res) => {
+    bot.processUpdate(req.body);
     res.sendStatus(200);
+  });
+} 
+// 💻 Ambiente locale (polling)
+else {
+  console.log("💻 Ambiente locale");
+  bot = new TelegramBot(TOKEN, { polling: true });
+  console.log("🌍 Server attivo su porta", PORT);
+}
 
+// 💬 Gestione messaggi
+bot.on("message", async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text?.trim();
+
+  console.log(`📩 Messaggio da ${msg.from.first_name || "utente"}: ${text}`);
+  if (!text) return;
+
+  try {
+    const ragResponse = await ragSearch(text);
+    await bot.sendMessage(chatId, ragResponse);
   } catch (error) {
-    console.error("❌ Errore nella gestione del messaggio:", error);
-    res.sendStatus(500);
+    console.error("Errore nel processo RAG:", error);
+    await bot.sendMessage(chatId, "Si è verificato un errore durante l'elaborazione del messaggio.");
   }
-});
-
-// 🔎 Test server
-app.get("/", (req, res) => {
-  res.send("IRIS 2.9 restore: OK");
 });
 
 // 🚀 Avvio server
 app.listen(PORT, () => {
-  console.log("🌍 Server attivo su porta", PORT);
+  console.log(`🌍 Server attivo su porta ${PORT}`);
 });
