@@ -1,5 +1,5 @@
 // ==============================
-// 🌐 IRIS 3.0 — index.js
+// 🌐 IRIS 3.0 — index.js (google-tts-api)
 // ==============================
 
 import express from "express";
@@ -7,8 +7,8 @@ import TelegramBot from "node-telegram-bot-api";
 import fetch from "node-fetch";
 import fs from "fs";
 import dotenv from "dotenv";
-import { exec } from "child_process";
 import path from "path";
+import googleTTS from "google-tts-api";
 
 dotenv.config();
 const app = express();
@@ -68,26 +68,32 @@ async function askGPT(prompt) {
 }
 
 // ------------------------------
-// 🔊 Generatore vocale (Google TTS)
+// 🔊 TTS con google-tts-api
 // ------------------------------
 async function textToSpeechGoogle(text, chatId) {
   console.log("🎙️ [IRIS 3.0] TTS attivo — modalità: google");
 
-  const voicePath = "/opt/render/project/src/voice.ogg";
-  const finalPath = "/opt/render/project/src/voice_final.ogg";
-  const command = `gtts-cli "${text}" --lang it --output "${voicePath}" && ffmpeg -i "${voicePath}" -c:a libopus -b:a 48k "${finalPath}" -y`;
-
-  return new Promise(resolve => {
-    exec(command, async (error) => {
-      if (error) {
-        console.error("Errore TTS:", error);
-        await bot.sendMessage(chatId, "Errore nel generare la voce.");
-        return resolve(null);
-      }
-      await bot.sendVoice(chatId, finalPath);
-      resolve(true);
+  try {
+    // Genera URL audio
+    const url = googleTTS.getAudioUrl(text, {
+      lang: "it",
+      slow: false,
+      host: "https://translate.google.com"
     });
-  });
+
+    // Scarica e salva il file OGG
+    const response = await fetch(url);
+    const buffer = await response.arrayBuffer();
+    const voicePath = "/opt/render/project/src/voice.ogg";
+    fs.writeFileSync(voicePath, Buffer.from(buffer));
+
+    // Invia audio a Telegram
+    await bot.sendVoice(chatId, voicePath);
+    console.log("✅ Audio inviato correttamente");
+  } catch (error) {
+    console.error("Errore TTS (google-tts-api):", error);
+    await bot.sendMessage(chatId, "Errore nel generare la voce.");
+  }
 }
 
 // ------------------------------
@@ -134,3 +140,4 @@ bot.on("message", async msg => {
 // ------------------------------
 app.get("/", (req, res) => res.send("IRIS 3.0 attiva 🚀"));
 app.listen(PORT, () => console.log(`✅ Server online su porta ${PORT}`));
+
