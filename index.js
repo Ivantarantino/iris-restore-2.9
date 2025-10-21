@@ -1,5 +1,5 @@
 // ==============================
-// 🌐 IRIS 3.0 — index.js (google-tts-api)
+// 🌐 IRIS 3.0 — index.js (con gestione 409)
 // ==============================
 
 import express from "express";
@@ -28,12 +28,27 @@ setInterval(() => {
 }, 11 * 60 * 1000);
 
 // ------------------------------
-// 🤖 Avvio Bot
+// 🤖 Avvio Bot con gestione errori 409
 // ------------------------------
-const bot = new TelegramBot(TOKEN, { polling: true });
-console.log("☁️ Ambiente Render attivo su porta", PORT);
-console.log("🧭 Modalità iniziale: HY");
-console.log("🌍 Server attivo su porta", PORT);
+let bot;
+function startBot() {
+  bot = new TelegramBot(TOKEN, { polling: true });
+
+  bot.on("polling_error", err => {
+    if (err.code === "ETELEGRAM" && err.response?.statusCode === 409) {
+      console.warn("⚠️ 409 Conflict rilevato — altra istanza attiva. Riprovo tra 30 secondi...");
+      bot.stopPolling();
+      setTimeout(startBot, 30000);
+    } else {
+      console.error("Errore polling:", err);
+    }
+  });
+
+  setupBotListeners();
+  console.log("🤖 Bot Telegram avviato con polling attivo");
+}
+
+startBot();
 
 // ------------------------------
 // 💬 Stato modalità risposta
@@ -74,20 +89,17 @@ async function textToSpeechGoogle(text, chatId) {
   console.log("🎙️ [IRIS 3.0] TTS attivo — modalità: google");
 
   try {
-    // Genera URL audio
     const url = googleTTS.getAudioUrl(text, {
       lang: "it",
       slow: false,
       host: "https://translate.google.com"
     });
 
-    // Scarica e salva il file OGG
     const response = await fetch(url);
     const buffer = await response.arrayBuffer();
     const voicePath = "/opt/render/project/src/voice.ogg";
     fs.writeFileSync(voicePath, Buffer.from(buffer));
 
-    // Invia audio a Telegram
     await bot.sendVoice(chatId, voicePath);
     console.log("✅ Audio inviato correttamente");
   } catch (error) {
@@ -99,45 +111,53 @@ async function textToSpeechGoogle(text, chatId) {
 // ------------------------------
 // 📩 Gestione messaggi Telegram
 // ------------------------------
-bot.on("message", async msg => {
-  const chatId = msg.chat.id;
-  const text = msg.text?.trim();
+function setupBotListeners() {
+  bot.on("message", async msg => {
+    const chatId = msg.chat.id;
+    const text = msg.text?.trim();
+    if (!text) return;
 
-  if (!text) return;
+    // 🧭 Gestione comando /replymode
+    if (text.startsWith("/replymode")) {
+      const parts = text.split(" ");
+      const mode = parts[1]?.toLowerCase();
 
-  // 🧭 Gestione comando /replymode
-  if (text.startsWith("/replymode")) {
-    const parts = text.split(" ");
-    const mode = parts[1]?.toLowerCase();
-
-    if (validModes.includes(mode)) {
-      replyMode = mode;
-      await bot.sendMessage(chatId, `✅ Modalità risposta impostata su: ${mode}`);
-    } else {
-      await bot.sendMessage(chatId, `ℹ️ Modalità attuale: ${replyMode}\nUsa uno di questi comandi:\n/replymode voice\n/replymode text\n/replymode both`);
+      if (validModes.includes(mode)) {
+        replyMode = mode;
+        await bot.sendMessage(chatId, `✅ Modalità risposta impostata su: ${mode}`);
+      } else {
+        await bot.sendMessage(
+          chatId,
+          `ℹ️ Modalità attuale: ${replyMode}\nUsa uno di questi comandi:\n/replymode voice\n/replymode text\n/replymode both`
+        );
+      }
+      return;
     }
-    return;
-  }
 
-  console.log(`📩 Messaggio da ${msg.from.first_name}: ${text}`);
+    console.log(`📩 Messaggio da ${msg.from.first_name}: ${text}`);
 
-  // 🧠 Chiamata GPT
-  const gptReply = await askGPT(text);
+    // 🧠 Risposta GPT
+    const gptReply = await askGPT(text);
 
-  // 💬 Invio testo e/o voce in base alla modalità
-  if (replyMode === "text") {
-    await bot.sendMessage(chatId, `💬 IRIS → ${msg.from.first_name}: ${gptReply}`);
-  } else if (replyMode === "voice") {
-    await textToSpeechGoogle(gptReply, chatId);
-  } else {
-    await bot.sendMessage(chatId, `💬 IRIS → ${msg.from.first_name}: ${gptReply}`);
-    await textToSpeechGoogle(gptReply, chatId);
-  }
-});
+    // 💬 Invio testo e/o voce
+    if (replyMode === "text") {
+      await bot.sendMessage(chatId, `💬 IRIS → ${msg.from.first_name}: ${gptReply}`);
+    } else if (replyMode === "voice") {
+      await textToSpeechGoogle(gptReply, chatId);
+    } else {
+      await bot.sendMessage(chatId, `💬 IRIS → ${msg.from.first_name}: ${gptReply}`);
+      await textToSpeechGoogle(gptReply, chatId);
+    }
+  });
+}
 
 // ------------------------------
 // 🚀 Server Express
 // ------------------------------
 app.get("/", (req, res) => res.send("IRIS 3.0 attiva 🚀"));
-app.listen(PORT, () => console.log(`✅ Server online su porta ${PORT}`));
-
+app.listen(PORT, () => {
+  console.log(`☁️ Ambiente Render attivo su porta ${PORT}`);
+  console.log("🧭 Modalità iniziale: HY");
+  console.log("🌍 Server attivo su porta", PORT);
+  console.log("✅ Server online su porta", PORT);
+});
