@@ -1,22 +1,21 @@
 {
   "name": "iris-3.0-restore",
   "version": "3.0.0",
-  "description": "IRIS 3.0 — sistema ibrido con RAG, TTS multiplo e modalità dinamiche",
+  "description": "IRIS 3.0 - Sistema Telegram AI con TTS, GPT e server Express su Render",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
-    "@qdrant/js-client-rest": "^1.8.0",
-    "axios": "^1.7.4",
-    "body-parser": "^1.20.2",
-    "dotenv": "^16.4.0",
-    "express": "^4.18.2",
-    "google-tts-api": "^2.0.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "fs": "^0.0.1-security",
     "node-fetch": "^3.3.2",
-    "node-telegram-bot-api": "^0.61.0",
-    "openai": "^4.13.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "path": "^0.12.7",
+    "google-tts-api": "^2.0.2"
   },
   "engines": {
     "node": ">=18.0.0"
